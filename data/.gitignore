@@ -1,0 +1,4 @@
+*.csv
+*.sav
+*.py
+.DS_Store
