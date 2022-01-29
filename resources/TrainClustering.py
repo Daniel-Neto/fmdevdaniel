@@ -21,12 +21,16 @@ from flask_jwt_extended import jwt_required
 from sklearn.metrics import make_scorer, SCORERS
 from pycaret.clustering import *
 
+# Aqui o algoritmo é treinado através de pycaret para retornar os dados necessários7
+# OBS.: Ao rodar o algoritmo novamente, o gráfico elbow pode não aparecer. Isso é um
+# bug a ser resolvido. Esse bug só não acontece se der refresh(Ctrl + S) no arquivo TrainClustering
+# antes de rodar novamente
 class TrainClustering(Resource):
 
 
-    def get_dataframe_from_csv(self, file_from_db, sep):
-        print('Este é o arquivo: ', file_from_db)
-        df = pd.read_csv(file_from_db, sep=sep, na_values='?')
+    def get_dataframe_from_csv(self, file_from_db):
+        # foi necessário utilizar engine=python para reconhecer o separador
+        df = pd.read_csv(file_from_db, sep=None, engine="python", na_values='?')
         columns = df.columns
         return df, columns
 
@@ -68,7 +72,7 @@ class TrainClustering(Resource):
             num_feat = []
         else:
             num_feat  = num_features.split(',')
-            print('Features numéricas: ', num_feat)
+            num_feat = [x.rstrip().lstrip() for x in num_feat]
         
         try:
             for elem in num_feat:
@@ -80,34 +84,22 @@ class TrainClustering(Resource):
         else:
             return num_feat
     
-    def getIgnoredFeat(self,features, columns):
-        print('Features: ', features)               
-        if features == "":
-            ignore_feat = []
-        else:
-            ignore_feat  = features.split(',')
-            print('teste: ', ignore_feat)
-
-        try:
-            for elem in ignore_feat:
-                if elem not in columns:
-                    sys.exit("(Value Error): Feature ignored doesn't exist")
-            
-        except:
-                traceback.print_exc()
-                return {"msg": "Error on get Features"}, 500   
-        else:
-            return ignore_feat
+    # Obtém as features a ignorar
+    def getFeaturesToIgnore(self,selectedFeatures, columns):
+        # o "set" serve para eliminar caso haja coluna duplicada
+        s_features = list(set(selectedFeatures))
+        ignored = [x for x in columns if x not in s_features]
+        return ignored
 
     # Inicializa o ambiente pycaret e pré-processa os dados
-    def start_clustering(self, data, normalize, num_features, features_ignored):
+    def start_clustering(self, data, normalize, normalizationtype, num_features, features_ignored):
         
         print('Tipo:  ' , type(features_ignored))
         print('Features a ignorar: ', features_ignored)
         #print('esses são os dados', data)
         print('Normalizar: ', normalize)
-        print('Features numéricas')
-        exp_clu101 = setup(data, normalize=normalize, log_experiment=True, numeric_features=num_features, ignore_features=features_ignored, session_id=123, silent=True)
+        print('Features numéricas', num_features)
+        exp_clu101 = setup(data, normalize=normalize, normalize_method=normalizationtype, log_experiment=True, numeric_features=num_features, ignore_features=features_ignored, session_id=123, silent=True)
         return exp_clu101
 
     # Cria o modelo para usar posteriormente
@@ -156,28 +148,31 @@ class TrainClustering(Resource):
         
             payload = request.get_json()
 
-            mandatory_fields = ['algorithm', 'separator','normalize','id']
+            mandatory_fields = ['algorithm','normalize','id']
 
             for field in mandatory_fields:
                 if field not in payload:
                     return {'msg': f'{field} not found'}, 500
 
-            separator = payload['separator']
+            
             num_clusters = payload['num_clusters']
             normalize = payload['normalize']
+            normalizationtype = payload['normalizationtype']
             algorithm = payload['algorithm']
             file_id = payload['id']
+            selectedFeatures = payload['featuresList']
             #obtém o path do banco para ser usado quando for ler o dataframe
             file_from_db = self.getFile(file_id)
             #Cria uma pasta temporária a ser usada depois
             temp_folder = current_app.config.get('TEMP_FOLDER')
 
-            df, columns = self.get_dataframe_from_csv(file_from_db, separator)
+            df, columns = self.get_dataframe_from_csv(file_from_db)
+            features_to_ignore = self.getFeaturesToIgnore(selectedFeatures,columns)
+            print('NOVO TESTE FEATURES: ', features_to_ignore)
             distrib_feature = self.checkDistributionFeature(payload['distrib_feature'], columns)
-            ignored_features = self.getIgnoredFeat(payload['features'], columns)
             numeric_features = self.getNumericFeat(payload['num_features'], columns)
             #inicia o setup para realizar a clusterização
-            clust_21 = self.start_clustering(df, normalize, numeric_features, ignored_features)
+            clust_21 = self.start_clustering(df, normalize, normalizationtype, numeric_features, features_to_ignore)
             #cria o modelo de acordo com o algoritmo passado
             model = self.create_clustering(algorithm, num_clusters)
             #Obtém as métricas do modelo
@@ -214,10 +209,9 @@ class TrainClustering(Resource):
                 # dbscan não utiliza elbow
                 plot_model(model, plot='elbow', save=True)
                 elbowImage = temp_folder + '/elbow - ' + id + '.png'
-                print(elbowImage)
                 os.rename(os.path.join(os.path.abspath(os.curdir), 'Elbow.png'), os.path.join(os.path.abspath(os.curdir), elbowImage))
             
-            # salva o modelo
+            # salva o modelo numa pasta específica
             modelName = 'model-saved - ' + id
             save_model(model, modelName)
             savedModel = temp_folder + '/' + modelName + '.pkl'
@@ -248,68 +242,4 @@ class TrainClustering(Resource):
             traceback.print_exc()
             return {"msg": "Error on DELETE Train"}, 500
 
-            #df_cluster['label'] = model.labels_
-            #PRECISEI INSTALAR KALEIDO, PRECISEI INSTALAR PLOTLY 
-            # COM ISSO CONSIGO GERAR AS IMAGENS PRO PCA
-            # import plotly.express as px
-
-            # #df = px.data.iris()
-            # X = df_cluster[df.columns]#['sepal_length', 'sepal_width', 'petal_length', 'petal_width']]
-
-            # pca = PCA(n_components=2)
-            # components = pca.fit_transform(X)
-            # fig = px.scatter(components, x=0, y=1, color=df_cluster['Cluster'])
-            # fig.show()
-            # fig.write_image("yourfile3.png")
-            # print('cheguei')
-            # with open('Cluster.html') as f:
-            #     imgkit.from_file(f, 'out.jpg')
-    
-            # print(temp_folder)
-            # import imgkit
-            # directory = os.getcwd()
-
-            # print(directory)
-            # imgkit.from_file('home/daniel/fmdev/backend/data/tmp/cluster.html', 'out.jpg')
-            # df_cluster = df_cluster.drop(columns=['species','Cluster'])
-            # pca = PCA(n_components=2)
-            # pca_newdf = pca.fit_transform(df_cluster)
-            # pca_newdf
-            # pca_final = pd.DataFrame(data = pca_newdf, columns= ['Componente_1', 'Componente_2']) #Seta as duas principais variáveis a agrupar
-            # print(pca_final)
-            # filtered_label0 = df_cluster.loc[df_cluster['label'] == 0]
-            # print(filtered_label0)
-            # plt.scatter(filtered_label0.iloc[:,0] , filtered_label0.iloc[:,1])
-            # plt.savefig(temp_folder)
-            # plt.show()
-            # pca = PCA(2)
-            # #Transform the data
-            # df_cluster = df_cluster.drop(columns=['species','Cluster'])
-            # df_cluster = pca.fit_transform(df_cluster)
-            # df_cluster['Cluster'] = model.labels_
-            # pca_df_final = pd.concat([pca_final, df_cluster.loc[df_cluster['Cluster']]], axis=1) # Concatena o pca_final com a coluna de Clusters do new_df
-            # pca_df_final
-
-            # u_labels = np.unique(model.labels_)
-            # for i in u_labels:
-            #     filtered = pca_df_final.loc[pca_df_final['Clusters'] == i]
-            #     plt.scatter(filtered.iloc[:,0] , filtered.iloc[:,1], label=i)
-            # plt.legend()
-            # plt.show()
-            # plt.savefig(temp_folder)
-
-
-
-
-            # filtered_label0 = df_cluster.loc[df_cluster['Cluster'] == 'Cluster 0']
-            # print(filtered_label0)
-            # plt.scatter(filtered_label0.iloc[:,0] , filtered_label0.iloc[:,1])
-            # plt.savefig(temp_folder)
-            # plt.show()
-            # hti = Html2Image
-            # hti.screenshot(html_file='home/daniel/fmdev/backend/Cluster.html', save_as='blue_page.png')
-            # hti = Html2Image()
-            # hti.screenshot(other_file='Cluster.html',size = (1000, 600))
-            # fig = self.plot_model(model, graphtype)
-            # print(fig)
-            # time.sleep(1)
+            

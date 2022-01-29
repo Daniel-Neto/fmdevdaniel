@@ -20,6 +20,7 @@ def get_response_image(image_path):
 # @jwt_requiredKP
 files_clustering = Blueprint('files_clustering', __name__, url_prefix='/api')
 
+# Função que obtém as imagens dos gráficos de clusterização, de acordo com o algoritmo escolhido
 @files_clustering.route('/images-clustering/<string:id>/<string:algorithm>', methods=['GET'])
 def get_images_clustering(id, algorithm):
     try:
@@ -33,13 +34,13 @@ def get_images_clustering(id, algorithm):
         if (algorithm != 'dbscan' and algorithm != 'hclust'):
             images_clustering = ['cluster', 'distribution', 'elbow', 'silhouette']
         else:
+            # DBSCAN só suporta gráficos de cluster e distribution
             if algorithm == 'dbscan':
                 images_clustering = ['cluster', 'distribution']
-
+            # hclust só suporta gráficos de cluster, distribution e elbow
             if algorithm == 'hclust':
                 images_clustering = ['cluster', 'distribution', 'elbow']
 
-        #images_clustering = ['cluster', 'distribution', 'elbow', 'silhouette']
         temp_folder = current_app.config.get('TEMP_FOLDER')
         resp = {}
         for image_name in images_clustering:
@@ -60,6 +61,8 @@ def get_images_clustering(id, algorithm):
         return {"msg": "Error on POST Train"}, 500
 
 
+
+# Função que retorna o excel clusterizado para o front end
 @files_clustering.route('/result/<string:id>', methods=['GET'])
 def result_clustering(id):
     try:
